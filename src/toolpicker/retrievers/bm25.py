@@ -33,21 +33,129 @@ from collections.abc import Iterable
 
 from toolpicker.types import Tool
 
-__all__ = ["BM25Retriever"]
+__all__ = ["DEFAULT_STOPWORDS", "BM25Retriever"]
 
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
-def _tokenize(text: str) -> list[str]:
-    """Lowercase + split on non-alphanumeric runs. Filter empty strings.
+# Standard English stopwords. Curated for tool-routing queries - kept
+# deliberately small so we don't drop tokens that might be meaningful in a
+# tool's domain (e.g. "do" survives because some tools literally do things,
+# "id" survives because it's a parameter name half the time).
+#
+# Added at v0.5 after a v0.4 discovery: BM25 was matching "a"/"at" in file-
+# tool descriptions and out-voting the semantic ranking on stopword-heavy
+# queries like "schedule a meeting tomorrow at 3pm". Filtering these at the
+# tokeniser kills the noise without touching the scoring formula.
+DEFAULT_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "if",
+        "then",
+        "else",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "to",
+        "of",
+        "in",
+        "on",
+        "at",
+        "by",
+        "for",
+        "with",
+        "from",
+        "into",
+        "as",
+        "about",
+        "over",
+        "under",
+        "between",
+        "through",
+        "this",
+        "that",
+        "these",
+        "those",
+        "i",
+        "me",
+        "my",
+        "you",
+        "your",
+        "we",
+        "us",
+        "our",
+        "they",
+        "them",
+        "their",
+        "it",
+        "its",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "whose",
+        "where",
+        "when",
+        "why",
+        "how",
+        "s",
+        "t",
+        "d",
+        "ll",
+        "m",
+        "re",
+        "ve",
+        "can",
+        "could",
+        "would",
+        "should",
+        "will",
+        "shall",
+        "may",
+        "might",
+        "must",
+        "have",
+        "has",
+        "had",
+        "having",
+        "not",
+        "no",
+        "yes",
+        "so",
+        "than",
+    }
+)
+
+
+def _tokenize(text: str, stopwords: frozenset[str] | None = None) -> list[str]:
+    """Lowercase + split on non-alphanumeric runs. Filter empty + stopwords.
 
     Deliberately simple. snake_case identifiers (``get_order_by_ban``) split
     into useful tokens; CamelCase doesn't - we lowercase first, so ``BANId``
     becomes one token ``banid``. Acceptable for v0.1; revisit if recall on
     CamelCase-heavy APIs underperforms.
+
+    Args:
+        text: Input text to tokenise.
+        stopwords: Frozen set of tokens to drop. Pass an empty frozenset to
+            disable stopword filtering entirely. Defaults to ``None`` which
+            means "no filter" - the BM25 constructor passes its configured
+            set in.
     """
-    return _TOKEN_RE.findall(text.lower())
+    toks = _TOKEN_RE.findall(text.lower())
+    if not stopwords:
+        return toks
+    return [t for t in toks if t not in stopwords]
 
 
 def _tool_text(tool: Tool) -> str:
@@ -72,6 +180,10 @@ class BM25Retriever:
         tools: Tools to index. Indexed at construction; rebuild for new tools.
         k1: Term-frequency saturation parameter (default 1.5).
         b: Length-normalisation parameter (default 0.75).
+        stopwords: Set of tokens to drop from both the index and queries.
+            Defaults to ``DEFAULT_STOPWORDS``. Pass ``frozenset()`` to disable
+            stopword filtering (the v0.4 behaviour); pass a custom frozenset
+            to override the curated default.
     """
 
     def __init__(
@@ -80,6 +192,7 @@ class BM25Retriever:
         *,
         k1: float = 1.5,
         b: float = 0.75,
+        stopwords: frozenset[str] | None = None,
     ) -> None:
         if k1 < 0:
             raise ValueError(f"k1 must be non-negative, got {k1}")
@@ -87,8 +200,9 @@ class BM25Retriever:
             raise ValueError(f"b must be in [0, 1], got {b}")
         self._k1 = k1
         self._b = b
+        self._stopwords: frozenset[str] = DEFAULT_STOPWORDS if stopwords is None else stopwords
         self._tool_ids: list[str] = [t.id for t in tools]
-        self._tokens: list[list[str]] = [_tokenize(_tool_text(t)) for t in tools]
+        self._tokens: list[list[str]] = [_tokenize(_tool_text(t), self._stopwords) for t in tools]
         self._lengths: list[int] = [len(toks) for toks in self._tokens]
         self._tfs: list[Counter[str]] = [Counter(toks) for toks in self._tokens]
         n_docs = len(tools)
@@ -107,7 +221,7 @@ class BM25Retriever:
     def retrieve(self, query: str, *, k: int) -> list[tuple[str, float]]:
         if k <= 0 or not self._tool_ids:
             return []
-        q_tokens = _tokenize(query)
+        q_tokens = _tokenize(query, self._stopwords)
         if not q_tokens:
             return []
         scored: list[tuple[str, float]] = []

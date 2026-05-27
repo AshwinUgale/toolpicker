@@ -40,9 +40,36 @@ def _picker_for(bench: SyntheticBenchmark) -> ToolPicker:
 def test_synthetic_benchmark_loads() -> None:
     bench = SyntheticBenchmark()
     assert bench.name == "synthetic"
-    assert len(bench.cases()) >= 10
+    # v0.5 expanded corpus: 25 tools, 200 cases (8 per tool).
+    assert len(bench.cases()) == 200
     tools = bench.tools().tools()
-    assert len(tools) >= 8
+    assert len(tools) == 25
+
+
+def test_synthetic_every_expected_tool_id_exists_in_corpus() -> None:
+    """Sanity check the data: every Case.expected_tool_ids entry must
+    correspond to an actual tool in the corpus. Cheap guard against
+    typos when authoring more cases.
+    """
+    bench = SyntheticBenchmark()
+    tool_ids = {t.id for t in bench.tools().tools()}
+    for case in bench.cases():
+        for expected in case.expected_tool_ids:
+            assert expected in tool_ids, f"Case {case.query!r} references unknown tool {expected!r}"
+
+
+def test_synthetic_eight_cases_per_tool() -> None:
+    """v0.5 authoring rule: each tool has exactly 8 cases."""
+    from collections import Counter
+
+    bench = SyntheticBenchmark()
+    per_tool: Counter[str] = Counter()
+    for case in bench.cases():
+        for expected in case.expected_tool_ids:
+            per_tool[expected] += 1
+    tool_ids = {t.id for t in bench.tools().tools()}
+    for tid in tool_ids:
+        assert per_tool[tid] == 8, f"Tool {tid} has {per_tool[tid]} cases (expected 8)"
 
 
 def test_get_benchmark_dispatch() -> None:
@@ -59,6 +86,174 @@ def test_toolbench_adapter_errors_without_data() -> None:
 def test_gorilla_adapter_errors_without_data() -> None:
     with pytest.raises(FileNotFoundError, match="Gorilla"):
         GorillaAdapter()
+
+
+# ---------------------------------------------------------------------------
+# ToolBench / Gorilla parsers - on-disk fixture-driven, no real data needed
+# ---------------------------------------------------------------------------
+
+
+def _write_toolbench_fixture(root: Path) -> None:
+    """Build a minimal ToolBench-shaped tree under root."""
+    tool_dir = root / "data" / "toolenv" / "tools" / "Weather"
+    tool_dir.mkdir(parents=True)
+    (tool_dir / "WeatherAPI.json").write_text(
+        json.dumps(
+            {
+                "tool_name": "WeatherAPI",
+                "title": "Weather",
+                "api_list": [
+                    {
+                        "name": "GetCurrentWeather",
+                        "description": "Get current weather for a city.",
+                        "required_parameters": [
+                            {"name": "city", "type": "STRING", "description": "City name."}
+                        ],
+                        "optional_parameters": [
+                            {"name": "units", "type": "STRING", "description": "metric/imperial."}
+                        ],
+                    },
+                    {
+                        "name": "GetForecast",
+                        "description": "Multi-day forecast.",
+                        "required_parameters": [],
+                        "optional_parameters": [
+                            {"name": "days", "type": "NUMBER", "description": "1-7."}
+                        ],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    # A malformed file - parser should skip without crashing.
+    (tool_dir / "Broken.json").write_text("{not valid json", encoding="utf-8")
+    # Query files
+    instr_dir = root / "data" / "instruction"
+    instr_dir.mkdir(parents=True)
+    (instr_dir / "G1_query.json").write_text(
+        json.dumps(
+            [
+                {
+                    "query": "What's the weather in Boston?",
+                    "query_id": 1,
+                    "relevant APIs": [["WeatherAPI", "GetCurrentWeather"]],
+                },
+                {
+                    "query": "Give me a 5-day forecast.",
+                    "query_id": 2,
+                    "relevant APIs": [["WeatherAPI", "GetForecast"]],
+                },
+                {
+                    "query": "Reference a tool we don't have loaded.",
+                    "query_id": 3,
+                    "relevant APIs": [["GhostAPI", "NopeNope"]],
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_toolbench_real_parser_loads_tools_and_cases(tmp_path: Path) -> None:
+    _write_toolbench_fixture(tmp_path)
+    bench = ToolBenchAdapter(data_dir=tmp_path)
+    tools = bench.tools().tools()
+    tool_ids = {t.id for t in tools}
+    assert "weatherapi__getcurrentweather" in tool_ids
+    assert "weatherapi__getforecast" in tool_ids
+    cases = bench.cases()
+    assert len(cases) == 2  # the GhostAPI case is dropped silently
+    assert cases[0].expected_tool_ids == ["weatherapi__getcurrentweather"]
+    stats = bench.stats
+    assert stats["tool_families_skipped"] >= 1  # the malformed file
+    assert stats["cases_dropped_unknown_tool"] == 1
+
+
+def test_toolbench_max_tools_caps_load(tmp_path: Path) -> None:
+    _write_toolbench_fixture(tmp_path)
+    bench = ToolBenchAdapter(data_dir=tmp_path, max_tools=1)
+    tools = bench.tools().tools()
+    assert len(tools) == 1
+
+
+def _write_gorilla_fixture(root: Path) -> None:
+    """Build a minimal Gorilla-shaped tree under root (torchhub only)."""
+    api_dir = root / "data" / "api"
+    api_dir.mkdir(parents=True)
+    (api_dir / "torchhub_api.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "domain": "Computer Vision",
+                        "framework": "PyTorch",
+                        "functionality": "Image Classification",
+                        "api_name": "ResNet50",
+                        "api_call": "torch.hub.load('pytorch/vision', 'resnet50')",
+                        "description": "ResNet50 image classifier.",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "domain": "Computer Vision",
+                        "framework": "PyTorch",
+                        "functionality": "Object Detection",
+                        "api_name": "DETR",
+                        "api_call": "torch.hub.load('facebookresearch/detr', 'detr_resnet50')",
+                        "description": "DETR object detector.",
+                    }
+                ),
+                "{ broken line ignored",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    q_dir = root / "eval" / "eval-data" / "questions" / "torchhub"
+    q_dir.mkdir(parents=True)
+    (q_dir / "questions_torchhub_0_shot.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"question_id": 0, "text": "I want to classify images of cats."}),
+                json.dumps({"question_id": 1, "text": "Detect objects in this photo."}),
+                json.dumps({"question_id": 2, "text": "No matching response will exist."}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    r_dir = root / "eval" / "eval-data" / "responses" / "torchhub"
+    r_dir.mkdir(parents=True)
+    (r_dir / "responses_torchhub_0_shot.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"answer_id": 0, "question_id": 0, "api_name": "ResNet50"}),
+                json.dumps({"answer_id": 1, "question_id": 1, "api_data": {"api_name": "DETR"}}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_gorilla_real_parser_loads_tools_and_cases(tmp_path: Path) -> None:
+    _write_gorilla_fixture(tmp_path)
+    bench = GorillaAdapter(data_dir=tmp_path, hubs=("torchhub",))
+    tools = bench.tools().tools()
+    tool_ids = {t.id for t in tools}
+    assert "torchhub__resnet50" in tool_ids
+    assert "torchhub__detr" in tool_ids
+    cases = bench.cases()
+    # 2 questions with responses; question_id=2 has no response and is
+    # dropped (cases_dropped_no_response).
+    assert len(cases) == 2
+    assert cases[0].expected_tool_ids == ["torchhub__resnet50"]
+    assert cases[1].expected_tool_ids == ["torchhub__detr"]
+    assert bench.stats["cases_dropped_no_response"] == 1
+
+
+def test_gorilla_rejects_unknown_hub(tmp_path: Path) -> None:
+    _write_gorilla_fixture(tmp_path)
+    with pytest.raises(ValueError, match="unknown hub"):
+        GorillaAdapter(data_dir=tmp_path, hubs=("not_a_hub",))
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +438,53 @@ def test_cli_writes_json(tmp_path: Path) -> None:
     assert "precision_at_1" in payload["metrics"]
     assert "mrr" in payload["metrics"]
     assert "latency" in payload["metrics"]
+
+
+def test_compare_cli_runs_three_strategies(tmp_path: Path) -> None:
+    """``python -m evals.compare`` over synthetic with hash embedder
+    should emit one block per strategy under ``results``."""
+    from evals.compare import main as compare_main
+
+    out = tmp_path / "compare.json"
+    rc = compare_main(
+        [
+            "--benchmark",
+            "synthetic",
+            "--embedder",
+            "hash",
+            "--output",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    strategies = [r["strategy"] for r in payload["results"]]
+    assert strategies == ["bm25-only", "semantic-only", "hybrid-rrf"]
+    for block in payload["results"]:
+        assert "precision_at_1" in block
+        assert "mrr" in block
+        assert block["n_cases"] == 200
+
+
+def test_compare_cli_embedder_none_skips_semantic_and_hybrid(tmp_path: Path) -> None:
+    """``--embedder none`` -> bm25-only is the only runnable strategy."""
+    from evals.compare import main as compare_main
+
+    out = tmp_path / "compare.json"
+    rc = compare_main(
+        [
+            "--benchmark",
+            "synthetic",
+            "--embedder",
+            "none",
+            "--output",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    strategies = [r["strategy"] for r in payload["results"]]
+    assert strategies == ["bm25-only"]
 
 
 def test_cli_with_token_budget(tmp_path: Path) -> None:

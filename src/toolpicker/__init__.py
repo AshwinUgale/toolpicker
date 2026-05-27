@@ -17,7 +17,7 @@ from toolpicker.sources import (
 )
 from toolpicker.types import RetrievalHit, Tool, ToolSource
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "BM25Retriever",

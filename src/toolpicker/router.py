@@ -38,6 +38,9 @@ class ToolPicker:
         rrf_k: RRF damping constant. Default 60.
         bm25_k1: BM25 saturation parameter. Default 1.5.
         bm25_b: BM25 length-normalisation parameter. Default 0.75.
+        bm25_stopwords: Optional override for the BM25 stopword set. ``None``
+            uses the curated default; pass ``frozenset()`` to disable
+            filtering (v0.4 behaviour); pass a custom set to override.
 
     Example:
         >>> from toolpicker import ToolPicker, FunctionSchemaSource, HashEmbedder
@@ -62,10 +65,11 @@ class ToolPicker:
         rrf_k: int = 60,
         bm25_k1: float = 1.5,
         bm25_b: float = 0.75,
+        bm25_stopwords: frozenset[str] | None = None,
     ) -> None:
         self._tools: list[Tool] = source.tools()
         self._tool_by_id: dict[str, Tool] = {t.id: t for t in self._tools}
-        self._bm25 = BM25Retriever(self._tools, k1=bm25_k1, b=bm25_b)
+        self._bm25 = BM25Retriever(self._tools, k1=bm25_k1, b=bm25_b, stopwords=bm25_stopwords)
         self._semantic = SemanticRetriever(self._tools, embedder) if embedder else None
         self._rrf_k = rrf_k
         self._weights: list[float] = (

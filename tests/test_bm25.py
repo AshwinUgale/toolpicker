@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from toolpicker import BM25Retriever, Tool
+from toolpicker.retrievers.bm25 import DEFAULT_STOPWORDS
 
 
 def _tools() -> list[Tool]:
@@ -84,3 +85,40 @@ def test_scores_are_descending() -> None:
     hits = bm25.retrieve("email weather order", k=5)
     scores = [s for _id, s in hits]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_stopwords_dropped_from_query_by_default() -> None:
+    """A query that's entirely stopwords should retrieve nothing under
+    the default tokeniser. Pre-v0.5 this leaked matches via "a"/"at".
+    """
+    bm25 = BM25Retriever(_tools())
+    hits = bm25.retrieve("a the of to in on at", k=3)
+    assert hits == []
+
+
+def test_stopwords_disabled_returns_v04_behaviour() -> None:
+    """Passing frozenset() restores the pre-stopword behaviour."""
+    bm25 = BM25Retriever(_tools(), stopwords=frozenset())
+    # "a" and "an" appear in send_email's "Send an email message to a recipient"
+    # description; without filtering, BM25 will at least score it.
+    hits = bm25.retrieve("a an the", k=3)
+    assert any(h[0] == "send_email" for h in hits)
+
+
+def test_default_stopwords_includes_common_english() -> None:
+    """Spot-check the curated set so a future trim doesn't silently lose
+    coverage on the stopwords we explicitly added the filter to handle.
+    """
+    for tok in ("a", "an", "the", "at", "of", "to", "in", "on", "for"):
+        assert tok in DEFAULT_STOPWORDS
+
+
+def test_custom_stopwords_override() -> None:
+    """Caller-supplied set replaces the default entirely - no merge."""
+    bm25 = BM25Retriever(_tools(), stopwords=frozenset({"weather"}))
+    # "weather" is now a stopword so it's dropped from the query.
+    hits = bm25.retrieve("weather", k=3)
+    assert hits == []
+    # But "a" is no longer a stopword (custom set doesn't include it).
+    hits2 = bm25.retrieve("a", k=3)
+    assert hits2 != []

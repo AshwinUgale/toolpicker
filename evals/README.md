@@ -29,9 +29,27 @@ uv run python -m evals --benchmark synthetic --token-budget 2000 --output out/sy
 
 | Name | Status | What it is |
 |---|---|---|
-| `synthetic` | ✅ ready | 10 tools / 15 cases across 5 domains. Cheap path; works without keys. The CI baseline. |
-| `gorilla` | 🚧 stub (v0.5) | UC Berkeley's API-calling benchmark. Set `TOOLPICKER_GORILLA_DIR` and fetch from https://github.com/ShishirPatil/gorilla |
-| `toolbench` | 🚧 stub (v0.5) | OpenBMB's large-scale benchmark. Set `TOOLPICKER_TOOLBENCH_DIR` and fetch from https://github.com/OpenBMB/ToolBench |
+| `synthetic` | ✅ ready | 25 tools / 200 cases across 6 domains, 8 phrasing styles per tool. Cheap path; works without keys. The CI baseline and headline-number benchmark when external datasets aren't fetched. |
+| `gorilla` | ✅ ready | UC Berkeley's API-calling benchmark. Set `TOOLPICKER_GORILLA_DIR` and fetch from https://github.com/ShishirPatil/gorilla. Default caps `max_tools=2000` / `max_cases=500`; pass `None` to load everything. |
+| `toolbench` | ✅ ready | OpenBMB's large-scale benchmark. Set `TOOLPICKER_TOOLBENCH_DIR` and fetch from https://github.com/OpenBMB/ToolBench. Same default caps as Gorilla. |
+
+## Multi-strategy comparison
+
+`python -m evals.compare` runs the same benchmark through three strategies in one shot - `bm25-only`, `semantic-only`, `hybrid-rrf` - and emits one JSON + a console table:
+
+```bash
+uv run python -m evals.compare --benchmark synthetic --embedder openai --output out/compare_oai.json
+```
+
+```
+strategy             p@1    p@3    mrr   p50_ms   p95_ms
+----------------------------------------------------------
+bm25-only          0.X     0.X    0.X       X.X      X.X
+semantic-only      0.X     0.X    0.X       X.X      X.X
+hybrid-rrf         0.X     0.X    0.X       X.X      X.X
+```
+
+With `--embedder none`, only `bm25-only` runs (the other two need embeddings).
 
 ## What gets measured
 
