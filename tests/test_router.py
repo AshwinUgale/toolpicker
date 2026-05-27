@@ -238,7 +238,13 @@ def test_weather_query(picker_bm25_only: ToolPicker) -> None:
 # ---------------------------------------------------------------------------
 # Real semantic queries - need OpenAI embeddings, otherwise skip.
 # These queries have minimal lexical overlap with tool text on purpose - they
-# prove the semantic half of the hybrid retriever is doing real work.
+# prove the semantic retriever is doing real work.
+#
+# These tests pin ``bm25_weight=0.0`` to isolate semantic. The reason: BM25
+# (no stopword filtering yet, v0.5 work) matches stopwords like "a"/"at" in
+# descriptions and pollutes the fused ranking when the query has zero content
+# overlap. Hybrid is still the default product surface; this file's hybrid
+# tests live above.
 # ---------------------------------------------------------------------------
 
 
@@ -255,7 +261,7 @@ def test_semantic_query_finds_weather_without_lexical_overlap() -> None:
     from toolpicker import OpenAIEmbeddings
 
     source = FunctionSchemaSource(_CORPUS)
-    picker = ToolPicker(source, embedder=OpenAIEmbeddings())
+    picker = ToolPicker(source, embedder=OpenAIEmbeddings(), bm25_weight=0.0)
     hits = picker.select("what's the temperature in San Francisco?", k=3)
     ids = [t.id for t in hits]
     assert any("weather" in i for i in ids)
@@ -273,7 +279,7 @@ def test_semantic_query_finds_calendar_without_lexical_overlap() -> None:
     from toolpicker import OpenAIEmbeddings
 
     source = FunctionSchemaSource(_CORPUS)
-    picker = ToolPicker(source, embedder=OpenAIEmbeddings())
+    picker = ToolPicker(source, embedder=OpenAIEmbeddings(), bm25_weight=0.0)
     hits = picker.select("schedule a meeting tomorrow at 3pm", k=3)
     ids = [t.id for t in hits]
     assert "create_calendar_event" in ids
