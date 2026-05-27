@@ -3,17 +3,20 @@
 See https://github.com/ashwinugale/toolpicker for usage.
 """
 
+from toolpicker.cache import CachedEmbedder
 from toolpicker.embeddings import EmbeddingProvider, HashEmbedder, OpenAIEmbeddings
 from toolpicker.fusion import reciprocal_rank_fusion
+from toolpicker.packer import count_tokens, default_serialise, pack_to_budget
 from toolpicker.retrievers import BM25Retriever, Retriever, SemanticRetriever
 from toolpicker.router import ToolPicker
 from toolpicker.sources import FunctionSchemaSource
 from toolpicker.types import RetrievalHit, Tool, ToolSource
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "BM25Retriever",
+    "CachedEmbedder",
     "EmbeddingProvider",
     "FunctionSchemaSource",
     "HashEmbedder",
@@ -25,5 +28,8 @@ __all__ = [
     "ToolPicker",
     "ToolSource",
     "__version__",
+    "count_tokens",
+    "default_serialise",
+    "pack_to_budget",
     "reciprocal_rank_fusion",
 ]

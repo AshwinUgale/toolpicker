@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from toolpicker.embeddings import EmbeddingProvider
 from toolpicker.fusion import reciprocal_rank_fusion
+from toolpicker.packer import pack_to_budget
 from toolpicker.retrievers.bm25 import BM25Retriever
 from toolpicker.retrievers.semantic import SemanticRetriever
 from toolpicker.types import Tool, ToolSource
@@ -76,16 +77,41 @@ class ToolPicker:
         """All tools the picker can return. Useful for debugging the corpus."""
         return list(self._tools)
 
-    def select(self, query: str, *, k: int = 5) -> list[Tool]:
-        """Return the top-k tools for the query, ordered by fused relevance.
+    def select(
+        self,
+        query: str,
+        *,
+        k: int = 5,
+        token_budget: int | None = None,
+    ) -> list[Tool]:
+        """Return tools for the query, ordered by fused relevance.
 
-        Empty list if the corpus is empty or no retriever returns a hit.
+        Args:
+            query: The user / agent input to route against.
+            k: Cap on the number of tools returned.
+            token_budget: Optional. If set, only return tools whose serialised
+                schemas fit under this total token budget. Greedy first-fit
+                (skip-and-continue): a too-big tool at rank N doesn't block
+                smaller tools at rank N+1. Returned list is bounded by
+                ``min(k, number_that_fit)``. If unset, returns the top-k
+                without any token-cost consideration.
+
+        Returns:
+            ``list[Tool]`` in rank order. Empty if corpus is empty or no
+            retriever returns a hit (or token_budget is too small for even
+            the smallest tool).
         """
         if k <= 0 or not self._tools:
             return []
+        # Over-fetch for fusion headroom AND packer headroom - if a tool
+        # doesn't fit the budget we need more candidates further down the
+        # ranking to try.
         overfetch_k = k * _OVERFETCH
         rankings = [self._bm25.retrieve(query, k=overfetch_k)]
         if self._semantic is not None:
             rankings.append(self._semantic.retrieve(query, k=overfetch_k))
         fused = reciprocal_rank_fusion(rankings, weights=self._weights, rrf_k=self._rrf_k)
-        return [self._tool_by_id[tid] for tid, _score in fused[:k] if tid in self._tool_by_id]
+        ranked = [self._tool_by_id[tid] for tid, _score in fused if tid in self._tool_by_id]
+        if token_budget is not None:
+            ranked = pack_to_budget(ranked, token_budget=token_budget)
+        return ranked[:k]
