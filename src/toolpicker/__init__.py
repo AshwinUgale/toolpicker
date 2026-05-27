@@ -9,10 +9,15 @@ from toolpicker.fusion import reciprocal_rank_fusion
 from toolpicker.packer import count_tokens, default_serialise, pack_to_budget
 from toolpicker.retrievers import BM25Retriever, Retriever, SemanticRetriever
 from toolpicker.router import ToolPicker
-from toolpicker.sources import FunctionSchemaSource
+from toolpicker.sources import (
+    FunctionSchemaSource,
+    MCPSource,
+    MergedSource,
+    OpenAPISource,
+)
 from toolpicker.types import RetrievalHit, Tool, ToolSource
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "BM25Retriever",
@@ -20,7 +25,10 @@ __all__ = [
     "EmbeddingProvider",
     "FunctionSchemaSource",
     "HashEmbedder",
+    "MCPSource",
+    "MergedSource",
     "OpenAIEmbeddings",
+    "OpenAPISource",
     "RetrievalHit",
     "Retriever",
     "SemanticRetriever",

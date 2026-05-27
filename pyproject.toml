@@ -146,5 +146,6 @@ module = [
     "jsonref",
     "mcp",
     "tiktoken",
+    "yaml",
 ]
 ignore_missing_imports = true
