@@ -30,6 +30,7 @@ Limits:
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -46,8 +47,13 @@ __all__ = ["GorillaAdapter"]
 _ENV_VAR = "TOOLPICKER_GORILLA_DIR"
 _HUBS = ("torchhub", "huggingface", "tensorflowhub")
 _API_GLOB = "data/api/{hub}_api.jsonl"
-_QUESTIONS_GLOB = "eval/eval-data/questions/{hub}/questions_{hub}_0_shot.jsonl"
-_RESPONSES_GLOB = "eval/eval-data/responses/{hub}/responses_{hub}_0_shot.jsonl"
+# Eval data lives under the nested `gorilla/` subdir in the current repo
+# layout (the repo hosts multiple sub-projects under one root).
+_QUESTIONS_GLOB = "gorilla/eval/eval-data/questions/{hub}/questions_{hub}_0_shot.jsonl"
+# There is no ground-truth file. The "oracle" model run is what the repo
+# treats as gold (model had perfect retrieval) so we read its api_call and
+# match the api_name back to a tool we loaded.
+_ORACLE_GLOB = "gorilla/eval/eval-data/responses/{hub}/response_{hub}_Gorilla_FT_oracle.jsonl"
 _SNAKE_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -88,6 +94,57 @@ def _pick_api_name(entry: dict[str, Any]) -> str | None:
     call = entry.get("api_call")
     if isinstance(call, str) and call.strip():
         return call.strip()[:100]
+    return None
+
+
+# Pattern used as a fallback when ast.literal_eval can't parse the oracle
+# response's stringified-dict ``text`` field (some entries have stray
+# escapes or unbalanced quotes).
+_API_CALL_RE = re.compile(r"['\"]api_call['\"]\s*:\s*['\"](.+?)['\"]\s*[,}]", re.DOTALL)
+
+
+def _extract_api_call(oracle_text: str) -> str | None:
+    """Pull the ``api_call`` string out of an oracle response's text.
+
+    Gorilla's oracle entries store the answer as a stringified Python dict
+    in the ``text`` field, e.g.::
+
+        "{'domain': 'Video Classification', 'api_call': \\"model = torch.hub.load(...)\\", ...}"
+
+    Two-tier extraction: try ``ast.literal_eval`` first (handles mixed
+    quotes cleanly); fall back to a regex on the literal ``'api_call':``
+    key when literal_eval rejects malformed entries.
+    """
+    if not oracle_text:
+        return None
+    try:
+        parsed = ast.literal_eval(oracle_text)
+    except (ValueError, SyntaxError):
+        parsed = None
+    if isinstance(parsed, dict):
+        call = parsed.get("api_call")
+        if isinstance(call, str) and call.strip():
+            return call
+    # Fallback - regex over the raw text.
+    match = _API_CALL_RE.search(oracle_text)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _match_api_name(call: str, api_names: list[str]) -> str | None:
+    """Find the longest api_name from ``api_names`` that appears in ``call``.
+
+    Longest-first to handle overlap (``bert`` vs ``bert-base-uncased``).
+    Substring match is exact (case-sensitive); api_names are stable model
+    identifiers and don't get rewritten between the api JSONL and the
+    oracle text.
+    """
+    if not call:
+        return None
+    for name in api_names:
+        if name and name in call:
+            return name
     return None
 
 
@@ -142,8 +199,11 @@ class GorillaAdapter:
         }
         self._cached_tools: list[dict[str, Any]] | None = None
         self._cached_cases: list[Case] | None = None
-        # `(hub, api_name_lower)` -> tool id
+        # `(hub, api_name)` -> tool id  (case-preserved api_name)
         self._id_map: dict[tuple[str, str], str] = {}
+        # Per-hub list of api_names sorted by length descending, for
+        # longest-match substring lookup against oracle api_call strings.
+        self._api_names_by_hub: dict[str, list[str]] = {}
 
     @property
     def data_dir(self) -> Path:
@@ -174,6 +234,7 @@ class GorillaAdapter:
         seen_ids: set[str] = set()
         for hub in self._hubs:
             api_path = self._data_dir / _API_GLOB.format(hub=hub)
+            hub_names: list[str] = []
             for entry in _read_jsonl(api_path):
                 api_name = _pick_api_name(entry)
                 if not api_name:
@@ -185,7 +246,8 @@ class GorillaAdapter:
                     tool_id = f"{base_id}_{suffix}"
                     suffix += 1
                 seen_ids.add(tool_id)
-                self._id_map[(hub, api_name.lower())] = tool_id
+                self._id_map[(hub, api_name)] = tool_id
+                hub_names.append(api_name)
                 description = (
                     entry.get("description")
                     or entry.get("functionality")
@@ -208,42 +270,70 @@ class GorillaAdapter:
                     }
                 )
                 if self._max_tools is not None and len(out) >= self._max_tools:
+                    # Persist what we collected for this hub before bailing.
+                    self._api_names_by_hub[hub] = sorted(hub_names, key=len, reverse=True)
                     self._stats["tools_loaded"] = len(out)
                     return out
+            # Sort api_names by length descending so longest-match wins
+            # when scanning oracle api_call strings (handles e.g.
+            # `bert` vs `bert-base-uncased`).
+            self._api_names_by_hub[hub] = sorted(hub_names, key=len, reverse=True)
         self._stats["tools_loaded"] = len(out)
         return out
 
     def _load_cases(self) -> list[Case]:
+        """Build cases by joining questions to oracle responses on question_id.
+
+        Gorilla has no separate ground-truth file. We treat the
+        ``response_{hub}_Gorilla_FT_oracle.jsonl`` file as gold - the
+        ``oracle`` suffix means the model was given perfect retrieval,
+        so its api_call output IS the labelled answer for that query.
+
+        Three drop reasons, all counted in ``stats``:
+        * ``cases_dropped_no_response``: question has no matching oracle entry
+        * ``cases_dropped_no_api_call``: oracle text didn't yield an api_call
+        * ``cases_dropped_unknown_tool``: api_call didn't match any loaded api_name
+        """
+        self._stats.setdefault("cases_dropped_no_api_call", 0)
         out: list[Case] = []
         for hub in self._hubs:
             q_path = self._data_dir / _QUESTIONS_GLOB.format(hub=hub)
-            r_path = self._data_dir / _RESPONSES_GLOB.format(hub=hub)
+            r_path = self._data_dir / _ORACLE_GLOB.format(hub=hub)
             questions = _read_jsonl(q_path)
-            responses_by_qid: dict[Any, dict[str, Any]] = {}
+            oracle_by_qid: dict[Any, dict[str, Any]] = {}
             for r in _read_jsonl(r_path):
                 qid = r.get("question_id")
                 if qid is not None:
-                    responses_by_qid[qid] = r
+                    oracle_by_qid[qid] = r
+            hub_api_names = self._api_names_by_hub.get(hub, [])
             for q in questions:
                 qid = q.get("question_id")
                 query = q.get("text") or q.get("question")
                 if not isinstance(query, str):
                     continue
-                response = responses_by_qid.get(qid)
-                if response is None:
+                query = query.strip()
+                if not query:
+                    continue
+                oracle = oracle_by_qid.get(qid)
+                if oracle is None:
                     self._stats["cases_dropped_no_response"] += 1
                     continue
-                # The expected api_name lives either at the top level of
-                # the response or under an ``api_data`` sub-object.
-                api_name = _pick_api_name(response)
-                if not api_name:
-                    api_data = response.get("api_data")
-                    if isinstance(api_data, dict):
-                        api_name = _pick_api_name(api_data)
-                if not api_name:
+                oracle_text = oracle.get("text")
+                if not isinstance(oracle_text, str):
+                    self._stats["cases_dropped_no_api_call"] += 1
+                    continue
+                # Two-tier match. Prefer matching against the extracted
+                # api_call when literal_eval / regex can pull it cleanly -
+                # narrower haystack, fewer false positives. Fall back to
+                # the entire oracle text when extraction fails: api_names
+                # are model identifiers (`slow_r50`, `bert-base-uncased`)
+                # which are specific enough that whole-text scan is safe.
+                search_text = _extract_api_call(oracle_text) or oracle_text
+                matched_name = _match_api_name(search_text, hub_api_names)
+                if matched_name is None:
                     self._stats["cases_dropped_unknown_tool"] += 1
                     continue
-                tool_id = self._id_map.get((hub, api_name.lower()))
+                tool_id = self._id_map.get((hub, matched_name))
                 if tool_id is None:
                     self._stats["cases_dropped_unknown_tool"] += 1
                     continue

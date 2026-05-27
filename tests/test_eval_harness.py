@@ -78,12 +78,22 @@ def test_get_benchmark_dispatch() -> None:
         get_benchmark("nope")
 
 
-def test_toolbench_adapter_errors_without_data() -> None:
+def test_toolbench_adapter_errors_without_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Strip the env var so the developer's real ToolBench checkout
+    # doesn't satisfy the no-arg constructor under test.
+    monkeypatch.delenv("TOOLPICKER_TOOLBENCH_DIR", raising=False)
     with pytest.raises(FileNotFoundError, match="ToolBench"):
         ToolBenchAdapter()
 
 
-def test_gorilla_adapter_errors_without_data() -> None:
+def test_gorilla_adapter_errors_without_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Strip the env var so the developer's real Gorilla checkout
+    # doesn't satisfy the no-arg constructor under test.
+    monkeypatch.delenv("TOOLPICKER_GORILLA_DIR", raising=False)
     with pytest.raises(FileNotFoundError, match="Gorilla"):
         GorillaAdapter()
 
@@ -209,7 +219,8 @@ def _write_gorilla_fixture(root: Path) -> None:
         ),
         encoding="utf-8",
     )
-    q_dir = root / "eval" / "eval-data" / "questions" / "torchhub"
+    # Real Gorilla layout: eval data lives under a nested `gorilla/` subdir.
+    q_dir = root / "gorilla" / "eval" / "eval-data" / "questions" / "torchhub"
     q_dir.mkdir(parents=True)
     (q_dir / "questions_torchhub_0_shot.jsonl").write_text(
         "\n".join(
@@ -221,13 +232,33 @@ def _write_gorilla_fixture(root: Path) -> None:
         ),
         encoding="utf-8",
     )
-    r_dir = root / "eval" / "eval-data" / "responses" / "torchhub"
+    # Oracle responses store a stringified Python dict in the `text` field
+    # whose api_call substring contains the gold api_name.
+    r_dir = root / "gorilla" / "eval" / "eval-data" / "responses" / "torchhub"
     r_dir.mkdir(parents=True)
-    (r_dir / "responses_torchhub_0_shot.jsonl").write_text(
+    (r_dir / "response_torchhub_Gorilla_FT_oracle.jsonl").write_text(
         "\n".join(
             [
-                json.dumps({"answer_id": 0, "question_id": 0, "api_name": "ResNet50"}),
-                json.dumps({"answer_id": 1, "question_id": 1, "api_data": {"api_name": "DETR"}}),
+                json.dumps(
+                    {
+                        "question_id": 0,
+                        "text": (
+                            "{'domain': 'Image Classification', "
+                            "'api_call': \"torch.hub.load('pytorch/vision', 'ResNet50')\", "
+                            "'api_provider': 'PyTorch'}"
+                        ),
+                    }
+                ),
+                json.dumps(
+                    {
+                        "question_id": 1,
+                        "text": (
+                            "{'domain': 'Object Detection', "
+                            "'api_call': \"torch.hub.load('facebookresearch/detr', 'DETR')\", "
+                            "'api_provider': 'PyTorch'}"
+                        ),
+                    }
+                ),
             ]
         ),
         encoding="utf-8",
