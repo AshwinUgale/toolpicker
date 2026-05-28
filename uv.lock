@@ -1967,7 +1967,7 @@ wheels = [
 
 [[package]]
 name = "toolpicker"
-version = "0.7.0"
+version = "1.0.0"
 source = { editable = "." }
 
 [package.optional-dependencies]

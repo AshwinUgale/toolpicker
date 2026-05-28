@@ -1,6 +1,6 @@
 [project]
 name = "toolpicker"
-version = "0.7.0"
+version = "1.0.0"
 description = "ToolPicker - hybrid lexical + semantic tool selection for LLM agents with many tools."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -8,13 +8,15 @@ license = { text = "MIT" }
 authors = [{ name = "Ashwin Ugale", email = "ugaleashwin@gmail.com" }]
 keywords = ["llm", "agents", "tool-calling", "tool-selection", "rag", "retrieval", "bm25", "rrf"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
 ]
 # Core install is zero-dependency by design - every optional capability
 # (embeddings, OpenAPI source, MCP source, docs) is an opt-in extra.

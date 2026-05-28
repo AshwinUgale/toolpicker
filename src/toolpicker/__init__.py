@@ -1,6 +1,26 @@
 """ToolPicker - hybrid lexical + semantic tool selection for LLM agents.
 
-See https://github.com/ashwinugale/toolpicker for usage.
+Pick K relevant tools out of N for an LLM agent. Three-stage router
+(BM25 + embeddings + optional intent classifier) fused via Reciprocal
+Rank Fusion, with a token-budget packer on top.
+
+Public surface (stable from v1.0):
+
+* `ToolPicker` - the facade. Construct with a `ToolSource`, an optional
+  embedder, and an optional intent classifier. Call `select(query, k=...)`.
+* Sources: `FunctionSchemaSource`, `OpenAPISource`, `MCPSource`,
+  `MergedSource`.
+* Embedders: `OpenAIEmbeddings`, `HashEmbedder`, `CachedEmbedder`. All
+  satisfy the `EmbeddingProvider` Protocol.
+* Intent: `IntentClassifier` Protocol + `EmbeddingNNIntent` reference impl
+  + `IntentExample` for labelled training pairs.
+* Retrievers (for custom fusion): `Retriever` Protocol, `BM25Retriever`,
+  `SemanticRetriever`, `reciprocal_rank_fusion`.
+* Packer: `pack_to_budget`, `count_tokens`, `default_serialise`.
+* Core types: `Tool`, `ToolSource`.
+
+Docs: https://ashwinugale.github.io/toolpicker/
+Repo: https://github.com/ashwinugale/toolpicker
 """
 
 from toolpicker.cache import CachedEmbedder
@@ -16,9 +36,9 @@ from toolpicker.sources import (
     MergedSource,
     OpenAPISource,
 )
-from toolpicker.types import RetrievalHit, Tool, ToolSource
+from toolpicker.types import Tool, ToolSource
 
-__version__ = "0.7.0"
+__version__ = "1.0.0"
 
 __all__ = [
     "BM25Retriever",
@@ -33,7 +53,6 @@ __all__ = [
     "MergedSource",
     "OpenAIEmbeddings",
     "OpenAPISource",
-    "RetrievalHit",
     "Retriever",
     "SemanticRetriever",
     "Tool",

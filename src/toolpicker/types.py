@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-__all__ = ["RetrievalHit", "Tool", "ToolSource"]
+__all__ = ["Tool", "ToolSource"]
 
 
 @dataclass(kw_only=True)
@@ -53,18 +53,3 @@ class ToolSource(Protocol):
     def tools(self) -> list[Tool]:
         """Return every tool this source knows about."""
         ...
-
-
-@dataclass(kw_only=True)
-class RetrievalHit:
-    """One retriever's ranked entry for a tool.
-
-    Carries the tool id, the position in this retriever's ranking (0-indexed),
-    and the raw score the retriever produced. Score interpretation is
-    retriever-specific (BM25 score, cosine similarity, etc.); rank is what
-    RRF fusion uses.
-    """
-
-    tool_id: str
-    rank: int
-    score: float

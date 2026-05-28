@@ -1,0 +1,149 @@
+# Build a wheel + sdist and publish to PyPI via trusted publishing (OIDC).
+#
+# Triggers on tags matching ``v*`` pushed to the repo. No long-lived API
+# token is stored anywhere — PyPI verifies the OIDC token GitHub Actions
+# issues and authorises the upload directly.
+#
+# One-time PyPI setup (done in the PyPI web UI, not here):
+#
+#   1. Create an account at https://pypi.org/account/register/ if you
+#      don't have one.
+#   2. Go to https://pypi.org/manage/account/publishing/ and add a
+#      "pending publisher":
+#          - PyPI Project Name:  toolpicker
+#          - Owner:              ashwinugale
+#          - Repository name:    toolpicker
+#          - Workflow name:      release.yml
+#          - Environment name:   pypi      (must match the `environment:` below)
+#   3. The first time this workflow runs successfully, PyPI creates the
+#      real project and removes the "pending" status. Subsequent releases
+#      use the same publisher config without any further setup.
+#
+# Cutting a release (single-repo flow, unlike Mneme's mirror):
+#
+#   # 1. Bump pyproject.toml + src/toolpicker/__init__.py __version__
+#   # 2. Commit on main
+#   # 3. Tag and push:
+#   git tag v1.0.0
+#   git push origin main --tags
+#   # The tag push fires this workflow.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Verify tag matches package version
+        run: |
+          set -e
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(uv run --no-project python -c '
+          import tomllib, pathlib
+          print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])
+          ')"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag $TAG_VERSION does not match pyproject version $PKG_VERSION"
+            exit 1
+          fi
+          echo "tag and pyproject agree on version $PKG_VERSION"
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: List build artifacts
+        run: ls -la dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    # The environment name MUST match what's registered as the
+    # trusted-publisher environment in PyPI's "pending publisher"
+    # config. PyPI will reject the upload otherwise.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/toolpicker
+    permissions:
+      # id-token: write is what lets GitHub mint the OIDC token PyPI
+      # uses to authenticate. contents: read is the default.
+      id-token: write
+      contents: read
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # No `password:` / `user:` — trusted publishing handles auth.
+          # `verbose: true` makes the upload log show why if it fails.
+          verbose: true
+
+  github-release:
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: |
+            See [CHANGELOG.md](./CHANGELOG.md) for what's in this release.
+
+            Install:
+
+                pip install toolpicker==${{ github.ref_name }}
+
+            (the leading `v` is dropped from the version in `pip` install lines)
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
