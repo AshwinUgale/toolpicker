@@ -1,17 +1,19 @@
 """ToolPicker facade - the public API.
 
-Constructs the BM25 + (optionally) semantic retrievers internally, owns the
-tool corpus, and exposes ``select(query, k)`` returning the top-k ``Tool``
-objects after RRF fusion.
+Constructs the BM25, (optionally) semantic, and (optionally) intent
+classifier retrievers internally, owns the tool corpus, and exposes
+``select(query, k)`` returning the top-k ``Tool`` objects after RRF fusion.
 
-v0.2 will add token-budget packing on top of this. v0.6 will add the
-optional intent-classifier retriever. v0.1 is just retrieve + fuse.
+At v0.6 the picker can fuse up to three ranking signals: BM25 + semantic +
+intent. The intent half is opt-in: pass ``intent_classifier=...`` to wire
+it in.
 """
 
 from __future__ import annotations
 
 from toolpicker.embeddings import EmbeddingProvider
 from toolpicker.fusion import reciprocal_rank_fusion
+from toolpicker.intent import IntentClassifier
 from toolpicker.packer import pack_to_budget
 from toolpicker.retrievers.bm25 import BM25Retriever
 from toolpicker.retrievers.semantic import SemanticRetriever
@@ -33,8 +35,14 @@ class ToolPicker:
         source: Anything satisfying ``ToolSource``. Read once at construction.
         embedder: Optional ``EmbeddingProvider``. If ``None``, semantic
             retrieval is skipped and selection is BM25-only.
+        intent_classifier: Optional ``IntentClassifier``. If ``None`` (the
+            default), no intent ranking is fused in. Pass an
+            ``EmbeddingNNIntent`` (or any classifier satisfying the
+            Protocol) to add example-label-based ranking as a third signal
+            alongside BM25 and semantic.
         bm25_weight: RRF weight for the BM25 retriever. Default 1.0.
         semantic_weight: RRF weight for the semantic retriever. Default 1.0.
+        intent_weight: RRF weight for the intent classifier. Default 1.0.
         rrf_k: RRF damping constant. Default 60.
         bm25_k1: BM25 saturation parameter. Default 1.5.
         bm25_b: BM25 length-normalisation parameter. Default 0.75.
@@ -60,8 +68,10 @@ class ToolPicker:
         source: ToolSource,
         *,
         embedder: EmbeddingProvider | None = None,
+        intent_classifier: IntentClassifier | None = None,
         bm25_weight: float = 1.0,
         semantic_weight: float = 1.0,
+        intent_weight: float = 1.0,
         rrf_k: int = 60,
         bm25_k1: float = 1.5,
         bm25_b: float = 0.75,
@@ -71,10 +81,17 @@ class ToolPicker:
         self._tool_by_id: dict[str, Tool] = {t.id: t for t in self._tools}
         self._bm25 = BM25Retriever(self._tools, k1=bm25_k1, b=bm25_b, stopwords=bm25_stopwords)
         self._semantic = SemanticRetriever(self._tools, embedder) if embedder else None
+        self._intent = intent_classifier
         self._rrf_k = rrf_k
-        self._weights: list[float] = (
-            [bm25_weight, semantic_weight] if self._semantic else [bm25_weight]
-        )
+        # Build the weights list in the same order rankings are emitted
+        # below: bm25 first, then semantic if present, then intent if
+        # present. RRF takes them positionally.
+        weights = [bm25_weight]
+        if self._semantic is not None:
+            weights.append(semantic_weight)
+        if self._intent is not None:
+            weights.append(intent_weight)
+        self._weights: list[float] = weights
 
     @property
     def tools(self) -> list[Tool]:
@@ -114,6 +131,8 @@ class ToolPicker:
         rankings = [self._bm25.retrieve(query, k=overfetch_k)]
         if self._semantic is not None:
             rankings.append(self._semantic.retrieve(query, k=overfetch_k))
+        if self._intent is not None:
+            rankings.append(self._intent.classify(query, k=overfetch_k))
         fused = reciprocal_rank_fusion(rankings, weights=self._weights, rrf_k=self._rrf_k)
         ranked = [self._tool_by_id[tid] for tid, _score in fused if tid in self._tool_by_id]
         if token_budget is not None:

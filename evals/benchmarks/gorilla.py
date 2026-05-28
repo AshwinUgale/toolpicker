@@ -132,6 +132,29 @@ def _extract_api_call(oracle_text: str) -> str | None:
     return None
 
 
+def _enrich_description(entry: dict[str, Any]) -> str:
+    """Build a query-friendly description from a Gorilla api entry.
+
+    Concatenates ``functionality | domain | description`` so the
+    use-case framing leads. Skips empty/non-string fields. Falls back to
+    a stringified api_call when nothing else is available.
+    """
+    parts: list[str] = []
+    for key in ("functionality", "domain"):
+        val = entry.get(key)
+        if isinstance(val, str) and val.strip():
+            parts.append(val.strip())
+    desc = entry.get("description")
+    if isinstance(desc, str) and desc.strip():
+        parts.append(desc.strip())
+    if parts:
+        return " | ".join(parts)
+    call = entry.get("api_call")
+    if isinstance(call, str):
+        return call
+    return ""
+
+
 def _match_api_name(call: str, api_names: list[str]) -> str | None:
     """Find the longest api_name from ``api_names`` that appears in ``call``.
 
@@ -248,15 +271,17 @@ class GorillaAdapter:
                 seen_ids.add(tool_id)
                 self._id_map[(hub, api_name)] = tool_id
                 hub_names.append(api_name)
-                description = (
-                    entry.get("description")
-                    or entry.get("functionality")
-                    or entry.get("api_call", "")
-                )
+                # Description enrichment (v0.6, ADR-010): the raw
+                # ``description`` field in Gorilla emphasises model
+                # architecture ("ResNet-style network based on SlowFast
+                # Networks paper"); queries ask about use cases ("classify
+                # videos"). Prepend functionality + domain tags so both
+                # BM25 and semantic see the use-case framing.
+                description = _enrich_description(entry)
                 out.append(
                     {
                         "name": tool_id,
-                        "description": description if isinstance(description, str) else "",
+                        "description": description,
                         "parameters": {"type": "object", "properties": {}},
                         "keywords": [
                             v

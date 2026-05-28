@@ -315,3 +315,86 @@ def test_picker_deduplicates_across_retrievers(picker: ToolPicker) -> None:
     hits = picker.select("get the weather forecast for tomorrow", k=10)
     ids = [t.id for t in hits]
     assert len(ids) == len(set(ids))
+
+
+# ---------------------------------------------------------------------------
+# v0.6 - intent classifier integration
+# ---------------------------------------------------------------------------
+
+
+def test_picker_accepts_intent_classifier() -> None:
+    """Smoke test: passing intent_classifier=... must not blow up and
+    must surface results that fuse cleanly."""
+    from toolpicker import EmbeddingNNIntent, IntentExample
+
+    source = FunctionSchemaSource(_CORPUS)
+    intent = EmbeddingNNIntent(
+        examples=[
+            IntentExample(query="send an email", tool_id="send_email"),
+            IntentExample(query="schedule a calendar event", tool_id="create_calendar_event"),
+        ],
+        embedder=HashEmbedder(dimensions=32),
+    )
+    picker = ToolPicker(
+        source,
+        embedder=HashEmbedder(dimensions=32),
+        intent_classifier=intent,
+    )
+    hits = picker.select("send a message to the team", k=3)
+    assert len(hits) <= 3
+    # Send-email or any plausible result is fine here - we're checking
+    # the pipeline doesn't crash with three rankings fused.
+    assert all(isinstance(h.id, str) for h in hits)
+
+
+def test_intent_classifier_sways_ranking_when_bm25_and_semantic_uncertain() -> None:
+    """When BM25 + semantic both have weak signal but the intent classifier
+    has a strong labelled-example match, the intent half should swing the
+    fused ranking. Uses HashEmbedder so semantic is noise; the only real
+    signal is BM25 + intent.
+    """
+    from toolpicker import EmbeddingNNIntent, IntentExample
+
+    source = FunctionSchemaSource(_CORPUS)
+    # 5 training examples all mapping a stopword-light query to send_email.
+    intent = EmbeddingNNIntent(
+        examples=[
+            IntentExample(query="ping the team about deployment", tool_id="send_email"),
+            IntentExample(query="notify stakeholders", tool_id="send_email"),
+            IntentExample(query="let the team know the build is green", tool_id="send_email"),
+            IntentExample(query="message bob about the release", tool_id="send_email"),
+            IntentExample(query="dispatch an update to everyone", tool_id="send_email"),
+        ],
+        embedder=HashEmbedder(dimensions=32),
+    )
+    picker_no_intent = ToolPicker(source, embedder=HashEmbedder(dimensions=32))
+    picker_with_intent = ToolPicker(
+        source,
+        embedder=HashEmbedder(dimensions=32),
+        intent_classifier=intent,
+        # Boost intent so it actually wins; hash semantic is noise so we
+        # can't expect it to align with intent.
+        intent_weight=3.0,
+    )
+    # A query that doesn't lexically mention email - send_email must come
+    # from the intent classifier.
+    ids_no_intent = [t.id for t in picker_no_intent.select("notify the team", k=3)]
+    ids_with_intent = [t.id for t in picker_with_intent.select("notify the team", k=3)]
+    assert "send_email" in ids_with_intent
+    # Strong assertion: intent moves send_email higher (or in) vs the
+    # no-intent picker.
+    if "send_email" in ids_no_intent and "send_email" in ids_with_intent:
+        assert ids_with_intent.index("send_email") <= ids_no_intent.index("send_email")
+
+
+def test_intent_classifier_none_preserves_v05_behaviour() -> None:
+    """Passing intent_classifier=None must be byte-identical to not
+    passing it at all - guards against accidental wiring changes."""
+    from toolpicker import EmbeddingNNIntent  # noqa: F401  (import sanity)
+
+    source = FunctionSchemaSource(_CORPUS)
+    p1 = ToolPicker(source, embedder=HashEmbedder(dimensions=32))
+    p2 = ToolPicker(source, embedder=HashEmbedder(dimensions=32), intent_classifier=None)
+    a = [t.id for t in p1.select("send email", k=5)]
+    b = [t.id for t in p2.select("send email", k=5)]
+    assert a == b

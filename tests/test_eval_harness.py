@@ -471,9 +471,11 @@ def test_cli_writes_json(tmp_path: Path) -> None:
     assert "latency" in payload["metrics"]
 
 
-def test_compare_cli_runs_three_strategies(tmp_path: Path) -> None:
+def test_compare_cli_runs_all_strategies_on_synthetic(tmp_path: Path) -> None:
     """``python -m evals.compare`` over synthetic with hash embedder
-    should emit one block per strategy under ``results``."""
+    should emit all 5 strategy blocks (bm25 / semantic / hybrid /
+    intent-only / bm25+semantic+intent), since the synthetic train
+    corpus is bundled."""
     from evals.compare import main as compare_main
 
     out = tmp_path / "compare.json"
@@ -490,11 +492,18 @@ def test_compare_cli_runs_three_strategies(tmp_path: Path) -> None:
     assert rc == 0
     payload = json.loads(out.read_text(encoding="utf-8"))
     strategies = [r["strategy"] for r in payload["results"]]
-    assert strategies == ["bm25-only", "semantic-only", "hybrid-rrf"]
+    assert strategies == [
+        "bm25-only",
+        "semantic-only",
+        "hybrid-rrf",
+        "intent-only",
+        "bm25+semantic+intent",
+    ]
     for block in payload["results"]:
         assert "precision_at_1" in block
         assert "mrr" in block
         assert block["n_cases"] == 200
+    assert payload["config"]["intent_examples"] == 50
 
 
 def test_compare_cli_embedder_none_skips_semantic_and_hybrid(tmp_path: Path) -> None:
