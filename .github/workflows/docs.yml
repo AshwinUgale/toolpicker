@@ -1,0 +1,68 @@
+# Build + deploy the mkdocs-material site to GitHub Pages.
+#
+# Runs on every push to main. To enable for a fresh fork:
+#   1. Settings -> Pages -> Source: "GitHub Actions"
+#   2. Push to main. The workflow takes over from there.
+
+name: Build docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "src/**"
+      - "pyproject.toml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one in-flight docs build at a time; cancel any superseded run.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      # Install the project with the [docs] extra. mkdocstrings autogen needs
+      # the package importable, so we install + the extra in one shot.
+      - name: Install project + docs deps
+        run: uv sync --extra docs
+
+      - name: Build site
+        run: uv run mkdocs build --strict
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

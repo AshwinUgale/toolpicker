@@ -104,17 +104,20 @@ class EmbeddingNNIntent:
             classifying. Default 5; raise for noisy corpora.
 
     Example:
-        >>> from toolpicker import HashEmbedder
-        >>> from toolpicker.intent import EmbeddingNNIntent, IntentExample
-        >>> intent = EmbeddingNNIntent(
-        ...     examples=[
-        ...         IntentExample(query="ping the team", tool_id="send_email"),
-        ...         IntentExample(query="block the afternoon", tool_id="create_calendar_event"),
-        ...     ],
-        ...     embedder=HashEmbedder(dimensions=32),
-        ... )
-        >>> intent.classify("notify the team", k=2)  # doctest: +ELLIPSIS
-        [...]
+        ```python
+        from toolpicker import HashEmbedder
+        from toolpicker.intent import EmbeddingNNIntent, IntentExample
+
+        intent = EmbeddingNNIntent(
+            examples=[
+                IntentExample(query="ping the team", tool_id="send_email"),
+                IntentExample(query="block the afternoon", tool_id="create_calendar_event"),
+            ],
+            embedder=HashEmbedder(dimensions=32),
+        )
+        hits = intent.classify("notify the team", k=2)
+        # Returns [(tool_id, score), ...] sorted by score desc.
+        ```
     """
 
     def __init__(

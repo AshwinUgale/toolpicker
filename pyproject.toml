@@ -1,6 +1,6 @@
 [project]
 name = "toolpicker"
-version = "0.6.0"
+version = "0.7.0"
 description = "ToolPicker - hybrid lexical + semantic tool selection for LLM agents with many tools."
 readme = "README.md"
 requires-python = ">=3.11"

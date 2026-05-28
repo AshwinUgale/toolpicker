@@ -4,8 +4,9 @@
 
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
+[![docs](https://img.shields.io/badge/docs-mkdocs--material-deeppurple)](https://ashwinugale.github.io/toolpicker/)
 
-**Status:** alpha. Public API is being shaped; pin to a specific version if you build on it.
+**Docs:** [ashwinugale.github.io/toolpicker](https://ashwinugale.github.io/toolpicker/) · **Status:** alpha. Public API is being shaped; pin to a specific version if you build on it.
 
 ## Why
 

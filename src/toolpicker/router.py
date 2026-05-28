@@ -51,16 +51,19 @@ class ToolPicker:
             filtering (v0.4 behaviour); pass a custom set to override.
 
     Example:
-        >>> from toolpicker import ToolPicker, FunctionSchemaSource, HashEmbedder
-        >>> source = FunctionSchemaSource([
-        ...     {"name": "get_weather", "description": "Get weather for a city.",
-        ...      "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}},
-        ...     {"name": "send_email", "description": "Send an email.",
-        ...      "parameters": {"type": "object", "properties": {"to": {"type": "string"}}}},
-        ... ])
-        >>> picker = ToolPicker(source, embedder=HashEmbedder())
-        >>> [t.name for t in picker.select("what's the temperature in SF?", k=1)]
-        ['get_weather']
+        ```python
+        from toolpicker import ToolPicker, FunctionSchemaSource, HashEmbedder
+
+        source = FunctionSchemaSource([
+            {"name": "get_weather", "description": "Get weather for a city.",
+             "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}},
+            {"name": "send_email", "description": "Send an email.",
+             "parameters": {"type": "object", "properties": {"to": {"type": "string"}}}},
+        ])
+        picker = ToolPicker(source, embedder=HashEmbedder())
+        tools = picker.select("what's the temperature in SF?", k=1)
+        # Returns a list of Tool objects matching the query.
+        ```
     """
 
     def __init__(
