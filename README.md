@@ -107,6 +107,14 @@ Full docs at **[ashwinugale.github.io/toolpicker](https://ashwinugale.github.io/
 
 ---
 
+## Related projects
+
+Part of a 4-project portfolio of production AI engineering:
+
+- **[mneme](https://github.com/AshwinUgale/mneme)** ([PyPI as smolAmem](https://pypi.org/project/smolAmem/)) — Multi-tier memory (working / episodic / semantic) for LLM agents with TTL + decay-based forgetting.
+- **[DocChat VS Code extension](https://github.com/AshwinUgale/docchat)** ([Marketplace](https://marketplace.visualstudio.com/items?itemName=AshwinUgale.docchat)) — Version-pinned library-docs Q&A panel. Uses ToolPicker for tool-routing across its 3 agent tools.
+- **[docchat-server](https://github.com/AshwinUgale/docchat-mcp)** ([PyPI](https://pypi.org/project/docchat-server/)) — The same retrieval pipeline exposed as an MCP server for Claude Code / Cursor.
+
 ## License
 
 MIT. See [LICENSE](./LICENSE).
